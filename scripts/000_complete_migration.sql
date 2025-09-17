@@ -1,6 +1,7 @@
 -- Complete Database Migration Script for Proposal Generator
 -- This script creates all tables, indexes, RLS policies, and default data
 -- Compatible with Supabase and Vercel deployment
+-- Updated with rich text editor support and PDF generation features
 
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -14,7 +15,7 @@ DROP TABLE IF EXISTS terms_condition_templates CASCADE;
 DROP TABLE IF EXISTS service_benefit_templates CASCADE;
 DROP TABLE IF EXISTS company_profile_templates CASCADE;
 
--- Create company_profile_templates table
+-- Updated company_profile_templates with rich text content support
 CREATE TABLE company_profile_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -24,29 +25,32 @@ CREATE TABLE company_profile_templates (
     email VARCHAR(255) NOT NULL,
     website VARCHAR(255),
     description TEXT,
+    content JSONB DEFAULT '{}', -- Rich text content storage
     logo_url TEXT,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create service_benefit_templates table
+-- Updated service_benefit_templates with structured JSONB content
 CREATE TABLE service_benefit_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     title VARCHAR(255) NOT NULL,
-    benefits JSONB NOT NULL DEFAULT '[]',
+    content TEXT, -- Rich text HTML content
+    benefits JSONB NOT NULL DEFAULT '[]', -- Structured benefits array
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create terms_condition_templates table
+-- Updated terms_condition_templates with rich text support
 CREATE TABLE terms_condition_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     title VARCHAR(255) NOT NULL,
-    terms JSONB NOT NULL DEFAULT '[]',
+    content TEXT, -- Rich text HTML content
+    terms JSONB NOT NULL DEFAULT '[]', -- Structured terms array
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -82,13 +86,13 @@ CREATE TABLE portfolios (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create proposals table
+-- Enhanced proposals table with PDF generation and design settings
 CREATE TABLE proposals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255) NOT NULL,
     proposal_type VARCHAR(100) NOT NULL DEFAULT 'business',
-    type VARCHAR(100) NOT NULL DEFAULT 'business',
-    status VARCHAR(50) DEFAULT 'draft',
+    type VARCHAR(100) NOT NULL DEFAULT 'quotation' CHECK (type IN ('quotation', 'partnership')),
+    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'completed', 'sent')),
     recipient_name VARCHAR(255) NOT NULL,
     recipient_company VARCHAR(255),
     recipient_address TEXT,
@@ -97,13 +101,13 @@ CREATE TABLE proposals (
     creator_name VARCHAR(255) NOT NULL,
     creator_position VARCHAR(255),
     letter_date DATE DEFAULT CURRENT_DATE,
-    content JSONB DEFAULT '{}',
+    content JSONB DEFAULT '{}', -- Complete proposal content
     company_profile_template_id UUID REFERENCES company_profile_templates(id),
     service_benefit_template_id UUID REFERENCES service_benefit_templates(id),
     terms_condition_template_id UUID REFERENCES terms_condition_templates(id),
     total_amount DECIMAL(15,2) DEFAULT 0,
-    pdf_url TEXT,
-    design_settings JSONB DEFAULT '{}',
+    pdf_url TEXT, -- Generated PDF file URL
+    design_settings JSONB DEFAULT '{}', -- PDF design configuration
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -122,10 +126,13 @@ CREATE TABLE proposal_products (
     UNIQUE(proposal_id, product_id)
 );
 
--- Create indexes for better performance
+-- Enhanced indexes including JSONB content indexing
 CREATE INDEX idx_company_profile_templates_user_id ON company_profile_templates(user_id);
+CREATE INDEX idx_company_profile_templates_content ON company_profile_templates USING GIN (content);
 CREATE INDEX idx_service_benefit_templates_user_id ON service_benefit_templates(user_id);
+CREATE INDEX idx_service_benefit_templates_benefits ON service_benefit_templates USING GIN (benefits);
 CREATE INDEX idx_terms_condition_templates_user_id ON terms_condition_templates(user_id);
+CREATE INDEX idx_terms_condition_templates_terms ON terms_condition_templates USING GIN (terms);
 CREATE INDEX idx_products_user_id ON products(user_id);
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_is_active ON products(is_active);
@@ -136,6 +143,8 @@ CREATE INDEX idx_proposals_user_id ON proposals(user_id);
 CREATE INDEX idx_proposals_status ON proposals(status);
 CREATE INDEX idx_proposals_type ON proposals(type);
 CREATE INDEX idx_proposals_created_at ON proposals(created_at);
+CREATE INDEX idx_proposals_content ON proposals USING GIN (content);
+CREATE INDEX idx_proposals_design_settings ON proposals USING GIN (design_settings);
 CREATE INDEX idx_proposal_products_proposal_id ON proposal_products(proposal_id);
 CREATE INDEX idx_proposal_products_product_id ON proposal_products(product_id);
 
@@ -242,13 +251,13 @@ CREATE POLICY "Users can delete their own proposal products" ON proposal_product
         )
     );
 
--- Create function to automatically create default templates for new users
+-- Updated default templates creation with rich text content
 CREATE OR REPLACE FUNCTION create_user_default_templates()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Create default company profile template
+    -- Create default company profile template with rich content
     INSERT INTO company_profile_templates (
-        name, company_name, address, phone, email, website, description, user_id
+        name, company_name, address, phone, email, website, description, content, user_id
     ) VALUES (
         'Default Company Profile',
         'Your Company Name',
@@ -257,36 +266,39 @@ BEGIN
         'info@yourcompany.com',
         'https://yourcompany.com',
         'Brief description of your company and services.',
+        '{"sections": {"about": "<p>We are a professional company dedicated to providing high-quality services to our clients.</p>", "mission": "<p>To deliver exceptional value through innovative solutions and outstanding customer service.</p>", "vision": "<p>To be the leading provider in our industry, recognized for excellence and integrity.</p>"}}'::jsonb,
         NEW.id
     );
 
-    -- Create default service benefits template
+    -- Create default service benefits template with rich content
     INSERT INTO service_benefit_templates (
-        name, title, benefits, user_id
+        name, title, content, benefits, user_id
     ) VALUES (
         'Default Service Benefits',
         'Our Service Benefits',
+        '<p>We offer comprehensive services designed to meet your business needs with the following key benefits:</p>',
         '[
-            {"title": "Professional Service", "description": "High-quality professional service with experienced team"},
-            {"title": "Competitive Pricing", "description": "Affordable pricing without compromising quality"},
-            {"title": "Timely Delivery", "description": "On-time project delivery as per agreed timeline"},
-            {"title": "24/7 Support", "description": "Round-the-clock customer support and maintenance"}
+            {"title": "Professional Service", "description": "<p>High-quality professional service with experienced team members who understand your business requirements.</p>"},
+            {"title": "Competitive Pricing", "description": "<p>Affordable pricing structure without compromising on quality or service delivery standards.</p>"},
+            {"title": "Timely Delivery", "description": "<p>On-time project delivery as per agreed timeline with regular progress updates and communication.</p>"},
+            {"title": "24/7 Support", "description": "<p>Round-the-clock customer support and maintenance services to ensure smooth operations.</p>"}
         ]'::jsonb,
         NEW.id
     );
 
-    -- Create default terms and conditions template
+    -- Create default terms and conditions template with rich content
     INSERT INTO terms_condition_templates (
-        name, title, terms, user_id
+        name, title, content, terms, user_id
     ) VALUES (
         'Default Terms & Conditions',
         'Terms and Conditions',
+        '<p>Please review the following terms and conditions that govern our business relationship:</p>',
         '[
-            {"title": "Payment Terms", "description": "50% advance payment, 50% upon project completion"},
-            {"title": "Project Timeline", "description": "Timeline as mutually agreed upon in the project scope"},
-            {"title": "Revision Policy", "description": "Up to 3 major revisions included in the quoted price"},
-            {"title": "Intellectual Property", "description": "All rights transferred to client upon full payment"},
-            {"title": "Cancellation Policy", "description": "48-hour notice required for meeting cancellations"}
+            {"title": "Payment Terms", "description": "<p><strong>Payment Schedule:</strong> 50% advance payment required to commence work, remaining 50% due upon project completion and delivery.</p>"},
+            {"title": "Project Timeline", "description": "<p><strong>Delivery Schedule:</strong> Project timeline as mutually agreed upon in the project scope document with milestone-based deliverables.</p>"},
+            {"title": "Revision Policy", "description": "<p><strong>Revisions Included:</strong> Up to 3 major revisions included in the quoted price. Additional revisions will be charged separately.</p>"},
+            {"title": "Intellectual Property", "description": "<p><strong>Rights Transfer:</strong> All intellectual property rights will be transferred to the client upon receipt of full payment.</p>"},
+            {"title": "Cancellation Policy", "description": "<p><strong>Cancellation Notice:</strong> 48-hour advance notice required for meeting cancellations. Project cancellation terms as per signed agreement.</p>"}
         ]'::jsonb,
         NEW.id
     );
