@@ -5,10 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Save, Plus, Trash2, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { createClient } from "@/lib/supabase/client"
+import QuillEditor from "@/components/QuillEditor"
 
 interface CompanyProfile {
   id: string
@@ -229,11 +229,9 @@ export default function CompanyProfilePage() {
 
               <div>
                 <Label htmlFor="template-content">Konten</Label>
-                <Textarea
-                  id="template-content"
-                  rows={15}
+                <QuillEditor
                   value={editingProfile.content}
-                  onChange={(e) => setEditingProfile({ ...editingProfile, content: e.target.value })}
+                  onChange={(content) => setEditingProfile({ ...editingProfile, content })}
                   placeholder="Masukkan konten company profile..."
                 />
               </div>
