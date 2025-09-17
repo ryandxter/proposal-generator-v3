@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { jsPDF } from "jspdf"
+import { renderHTMLContent } from "@/utils/htmlToPdf"
 
 interface ProposalData {
   type: "quotation" | "partnership"
@@ -53,6 +54,8 @@ interface DesignSettings {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log("[v0] Starting PDF generation")
+
     const {
       proposalData,
       designSettings,
@@ -65,12 +68,21 @@ export async function POST(request: NextRequest) {
       products?: any[]
     } = await request.json()
 
+    console.log("[v0] Received proposal data:", {
+      type: proposalData.type,
+      hasCompanyProfile: !!proposalData.companyProfileContent,
+      hasServiceBenefits: !!proposalData.serviceBenefitsContent,
+      hasTermsConditions: !!proposalData.termsConditionsContent,
+    })
+
     // Create new PDF document with design settings
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "mm",
       format: designSettings.pageSize.toLowerCase() as "a4" | "letter" | "legal",
     })
+
+    console.log("[v0] Created PDF document")
 
     // Apply design settings
     doc.setFont("helvetica")
@@ -111,13 +123,28 @@ export async function POST(request: NextRequest) {
     doc.setTextColor(0, 0, 0)
 
     if (proposalData.companyProfileContent) {
+      console.log("[v0] Rendering company profile content")
       doc.setFont("helvetica", "bold")
+      doc.setFontSize(14)
+      doc.setTextColor(designSettings.primaryColor)
       doc.text("PROFIL PERUSAHAAN", margins.left, yPosition)
-      yPosition += 8
+      yPosition += 10
+
+      // Reset to normal style before rendering HTML content
       doc.setFont("helvetica", "normal")
-      const profileLines = doc.splitTextToSize(proposalData.companyProfileContent, 160)
-      doc.text(profileLines, margins.left, yPosition)
-      yPosition += profileLines.length * 6 + 15
+      doc.setFontSize(designSettings.fontSize)
+      doc.setTextColor(0, 0, 0)
+
+      try {
+        yPosition = renderHTMLContent(doc, proposalData.companyProfileContent, yPosition, margins)
+      } catch (error) {
+        console.error("[v0] Error rendering company profile:", error)
+        // Fallback to plain text
+        const lines = doc.splitTextToSize(proposalData.companyProfileContent, 160)
+        doc.text(lines, margins.left, yPosition)
+        yPosition += lines.length * 6
+      }
+      yPosition += 15
     }
 
     // Add proposal title
@@ -162,16 +189,28 @@ export async function POST(request: NextRequest) {
     yPosition += openingLines.length * 6 + 15
 
     if (proposalData.serviceBenefitsContent) {
+      console.log("[v0] Rendering service benefits content")
       doc.setFont("helvetica", "bold")
+      doc.setFontSize(14)
       doc.setTextColor(designSettings.primaryColor)
       doc.text("KEUNTUNGAN LAYANAN KAMI", margins.left, yPosition)
       yPosition += 10
+
+      // Reset to normal style before rendering HTML content
       doc.setFont("helvetica", "normal")
+      doc.setFontSize(designSettings.fontSize)
       doc.setTextColor(0, 0, 0)
 
-      const benefitsLines = doc.splitTextToSize(proposalData.serviceBenefitsContent, 160)
-      doc.text(benefitsLines, margins.left, yPosition)
-      yPosition += benefitsLines.length * 6 + 15
+      try {
+        yPosition = renderHTMLContent(doc, proposalData.serviceBenefitsContent, yPosition, margins)
+      } catch (error) {
+        console.error("[v0] Error rendering service benefits:", error)
+        // Fallback to plain text
+        const lines = doc.splitTextToSize(proposalData.serviceBenefitsContent, 160)
+        doc.text(lines, margins.left, yPosition)
+        yPosition += lines.length * 6
+      }
+      yPosition += 15
     }
 
     if (proposalData.products && proposalData.products.length > 0) {
@@ -228,16 +267,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (proposalData.termsConditionsContent) {
+      console.log("[v0] Rendering terms and conditions content")
       doc.setFont("helvetica", "bold")
+      doc.setFontSize(14)
       doc.setTextColor(designSettings.primaryColor)
       doc.text("SYARAT DAN KETENTUAN", margins.left, yPosition)
       yPosition += 10
+
+      // Reset to normal style before rendering HTML content
       doc.setFont("helvetica", "normal")
+      doc.setFontSize(designSettings.fontSize)
       doc.setTextColor(0, 0, 0)
 
-      const termsLines = doc.splitTextToSize(proposalData.termsConditionsContent, 160)
-      doc.text(termsLines, margins.left, yPosition)
-      yPosition += termsLines.length * 6 + 15
+      try {
+        yPosition = renderHTMLContent(doc, proposalData.termsConditionsContent, yPosition, margins)
+      } catch (error) {
+        console.error("[v0] Error rendering terms and conditions:", error)
+        // Fallback to plain text
+        const lines = doc.splitTextToSize(proposalData.termsConditionsContent, 160)
+        doc.text(lines, margins.left, yPosition)
+        yPosition += lines.length * 6
+      }
+      yPosition += 15
     }
 
     // Add closing
@@ -269,9 +320,11 @@ export async function POST(request: NextRequest) {
       doc.text(designSettings.footer.content, doc.internal.pageSize.getWidth() / 2, footerY, { align: "center" })
     }
 
+    console.log("[v0] Generating PDF buffer")
     // Generate PDF buffer
     const pdfBuffer = doc.output("arraybuffer")
 
+    console.log("[v0] PDF generated successfully")
     // Return PDF as response
     return new NextResponse(pdfBuffer, {
       status: 200,
@@ -281,7 +334,7 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("Error generating PDF:", error)
-    return NextResponse.json({ error: "Failed to generate PDF" }, { status: 500 })
+    console.error("[v0] Error generating PDF:", error)
+    return NextResponse.json({ error: "Failed to generate PDF", details: error.message }, { status: 500 })
   }
 }

@@ -1,7 +1,7 @@
 -- Complete Database Migration Script for Proposal Generator
 -- This script creates all tables, indexes, RLS policies, and default data
 -- Compatible with Supabase and Vercel deployment
--- Updated with rich text editor support and PDF generation features
+-- Updated with rich text editor support, PDF generation features, and enhanced schema
 
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS terms_condition_templates CASCADE;
 DROP TABLE IF EXISTS service_benefit_templates CASCADE;
 DROP TABLE IF EXISTS company_profile_templates CASCADE;
 
--- Updated company_profile_templates with rich text content support
+-- Enhanced company_profile_templates with rich text content support
 CREATE TABLE company_profile_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -25,32 +25,32 @@ CREATE TABLE company_profile_templates (
     email VARCHAR(255) NOT NULL,
     website VARCHAR(255),
     description TEXT,
-    content JSONB DEFAULT '{}', -- Rich text content storage
+    content TEXT, -- Rich text HTML content from QuillEditor
     logo_url TEXT,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Updated service_benefit_templates with structured JSONB content
+-- Enhanced service_benefit_templates with structured JSONB content and HTML support
 CREATE TABLE service_benefit_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     title VARCHAR(255) NOT NULL,
-    content TEXT, -- Rich text HTML content
-    benefits JSONB NOT NULL DEFAULT '[]', -- Structured benefits array
+    content TEXT, -- Rich text HTML content from QuillEditor
+    benefits JSONB NOT NULL DEFAULT '[]', -- Structured benefits array with HTML descriptions
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Updated terms_condition_templates with rich text support
+-- Enhanced terms_condition_templates with rich text support
 CREATE TABLE terms_condition_templates (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     title VARCHAR(255) NOT NULL,
-    content TEXT, -- Rich text HTML content
-    terms JSONB NOT NULL DEFAULT '[]', -- Structured terms array
+    content TEXT, -- Rich text HTML content from QuillEditor
+    terms JSONB NOT NULL DEFAULT '[]', -- Structured terms array with HTML descriptions
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -86,7 +86,7 @@ CREATE TABLE portfolios (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Enhanced proposals table with PDF generation and design settings
+-- Enhanced proposals table with comprehensive PDF generation and design settings
 CREATE TABLE proposals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255) NOT NULL,
@@ -101,13 +101,25 @@ CREATE TABLE proposals (
     creator_name VARCHAR(255) NOT NULL,
     creator_position VARCHAR(255),
     letter_date DATE DEFAULT CURRENT_DATE,
-    content JSONB DEFAULT '{}', -- Complete proposal content
+    content JSONB DEFAULT '{}', -- Complete proposal content with HTML support
     company_profile_template_id UUID REFERENCES company_profile_templates(id),
     service_benefit_template_id UUID REFERENCES service_benefit_templates(id),
     terms_condition_template_id UUID REFERENCES terms_condition_templates(id),
     total_amount DECIMAL(15,2) DEFAULT 0,
-    pdf_url TEXT, -- Generated PDF file URL
-    design_settings JSONB DEFAULT '{}', -- PDF design configuration
+    pdf_url TEXT, -- Generated PDF file URL for storage
+    design_settings JSONB DEFAULT '{
+        "theme": "professional",
+        "primaryColor": "#2563eb",
+        "secondaryColor": "#64748b",
+        "fontFamily": "helvetica",
+        "fontSize": 12,
+        "lineHeight": 1.5,
+        "pageSize": "A4",
+        "margins": {"top": 20, "right": 20, "bottom": 20, "left": 20},
+        "header": {"enabled": true, "height": 15, "content": "PROPOSAL BISNIS", "showLogo": false},
+        "footer": {"enabled": true, "height": 15, "content": "Confidential Document", "showPageNumbers": true},
+        "watermark": {"enabled": false, "text": "DRAFT", "opacity": 20}
+    }'::jsonb, -- PDF design configuration with defaults
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -126,13 +138,15 @@ CREATE TABLE proposal_products (
     UNIQUE(proposal_id, product_id)
 );
 
--- Enhanced indexes including JSONB content indexing
+-- Enhanced indexes including content search optimization
 CREATE INDEX idx_company_profile_templates_user_id ON company_profile_templates(user_id);
-CREATE INDEX idx_company_profile_templates_content ON company_profile_templates USING GIN (content);
+CREATE INDEX idx_company_profile_templates_content ON company_profile_templates USING gin(to_tsvector('indonesian', content)); -- Full-text search on HTML content
 CREATE INDEX idx_service_benefit_templates_user_id ON service_benefit_templates(user_id);
 CREATE INDEX idx_service_benefit_templates_benefits ON service_benefit_templates USING GIN (benefits);
+CREATE INDEX idx_service_benefit_templates_content ON service_benefit_templates USING gin(to_tsvector('indonesian', content)); -- Full-text search
 CREATE INDEX idx_terms_condition_templates_user_id ON terms_condition_templates(user_id);
 CREATE INDEX idx_terms_condition_templates_terms ON terms_condition_templates USING GIN (terms);
+CREATE INDEX idx_terms_condition_templates_content ON terms_condition_templates USING gin(to_tsvector('indonesian', content)); -- Full-text search
 CREATE INDEX idx_products_user_id ON products(user_id);
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_is_active ON products(is_active);
@@ -145,6 +159,7 @@ CREATE INDEX idx_proposals_type ON proposals(type);
 CREATE INDEX idx_proposals_created_at ON proposals(created_at);
 CREATE INDEX idx_proposals_content ON proposals USING GIN (content);
 CREATE INDEX idx_proposals_design_settings ON proposals USING GIN (design_settings);
+CREATE INDEX idx_proposals_pdf_url ON proposals(pdf_url) WHERE pdf_url IS NOT NULL; -- Index for PDF URL lookups
 CREATE INDEX idx_proposal_products_proposal_id ON proposal_products(proposal_id);
 CREATE INDEX idx_proposal_products_product_id ON proposal_products(product_id);
 
@@ -251,11 +266,11 @@ CREATE POLICY "Users can delete their own proposal products" ON proposal_product
         )
     );
 
--- Updated default templates creation with rich text content
+-- Enhanced default templates creation with rich HTML content
 CREATE OR REPLACE FUNCTION create_user_default_templates()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Create default company profile template with rich content
+    -- Create default company profile template with rich HTML content
     INSERT INTO company_profile_templates (
         name, company_name, address, phone, email, website, description, content, user_id
     ) VALUES (
@@ -266,40 +281,67 @@ BEGIN
         'info@yourcompany.com',
         'https://yourcompany.com',
         'Brief description of your company and services.',
-        '{"sections": {"about": "<p>We are a professional company dedicated to providing high-quality services to our clients.</p>", "mission": "<p>To deliver exceptional value through innovative solutions and outstanding customer service.</p>", "vision": "<p>To be the leading provider in our industry, recognized for excellence and integrity.</p>"}}'::jsonb,
+        '<h2>Tentang Perusahaan</h2><p>Kami adalah perusahaan profesional yang berdedikasi untuk memberikan layanan berkualitas tinggi kepada klien kami.</p><h3>Misi Kami</h3><p>Memberikan nilai luar biasa melalui solusi inovatif dan layanan pelanggan yang outstanding.</p><h3>Visi Kami</h3><p>Menjadi penyedia terdepan di industri kami, diakui karena keunggulan dan integritas.</p>', -- Rich HTML content
         NEW.id
     );
 
-    -- Create default service benefits template with rich content
+    -- Create default service benefits template with rich HTML content
     INSERT INTO service_benefit_templates (
         name, title, content, benefits, user_id
     ) VALUES (
         'Default Service Benefits',
-        'Our Service Benefits',
-        '<p>We offer comprehensive services designed to meet your business needs with the following key benefits:</p>',
+        'Keuntungan Layanan Kami',
+        '<p>Kami menawarkan layanan komprehensif yang dirancang untuk memenuhi kebutuhan bisnis Anda dengan keuntungan utama sebagai berikut:</p>', -- Rich HTML content
         '[
-            {"title": "Professional Service", "description": "<p>High-quality professional service with experienced team members who understand your business requirements.</p>"},
-            {"title": "Competitive Pricing", "description": "<p>Affordable pricing structure without compromising on quality or service delivery standards.</p>"},
-            {"title": "Timely Delivery", "description": "<p>On-time project delivery as per agreed timeline with regular progress updates and communication.</p>"},
-            {"title": "24/7 Support", "description": "<p>Round-the-clock customer support and maintenance services to ensure smooth operations.</p>"}
-        ]'::jsonb,
+            {
+                "title": "Layanan Profesional", 
+                "description": "<p><strong>Layanan berkualitas tinggi</strong> dengan tim berpengalaman yang memahami kebutuhan bisnis Anda.</p><ul><li>Tim ahli bersertifikat</li><li>Pengalaman lebih dari 5 tahun</li><li>Metodologi terbukti</li></ul>"
+            },
+            {
+                "title": "Harga Kompetitif", 
+                "description": "<p><strong>Struktur harga terjangkau</strong> tanpa mengorbankan kualitas atau standar penyampaian layanan.</p><ul><li>Paket fleksibel</li><li>Tidak ada biaya tersembunyi</li><li>ROI yang terukur</li></ul>"
+            },
+            {
+                "title": "Pengiriman Tepat Waktu", 
+                "description": "<p><strong>Pengiriman proyek tepat waktu</strong> sesuai timeline yang disepakati dengan update progress reguler.</p><ul><li>Milestone tracking</li><li>Progress report mingguan</li><li>Komunikasi real-time</li></ul>"
+            },
+            {
+                "title": "Dukungan 24/7", 
+                "description": "<p><strong>Dukungan pelanggan dan maintenance</strong> sepanjang waktu untuk memastikan operasional yang lancar.</p><ul><li>Help desk 24/7</li><li>Remote support</li><li>Emergency response</li></ul>"
+            }
+        ]'::jsonb, -- Enhanced benefits with HTML descriptions
         NEW.id
     );
 
-    -- Create default terms and conditions template with rich content
+    -- Create default terms and conditions template with rich HTML content
     INSERT INTO terms_condition_templates (
         name, title, content, terms, user_id
     ) VALUES (
         'Default Terms & Conditions',
-        'Terms and Conditions',
-        '<p>Please review the following terms and conditions that govern our business relationship:</p>',
+        'Syarat dan Ketentuan',
+        '<p>Mohon tinjau syarat dan ketentuan berikut yang mengatur hubungan bisnis kami:</p>', -- Rich HTML content
         '[
-            {"title": "Payment Terms", "description": "<p><strong>Payment Schedule:</strong> 50% advance payment required to commence work, remaining 50% due upon project completion and delivery.</p>"},
-            {"title": "Project Timeline", "description": "<p><strong>Delivery Schedule:</strong> Project timeline as mutually agreed upon in the project scope document with milestone-based deliverables.</p>"},
-            {"title": "Revision Policy", "description": "<p><strong>Revisions Included:</strong> Up to 3 major revisions included in the quoted price. Additional revisions will be charged separately.</p>"},
-            {"title": "Intellectual Property", "description": "<p><strong>Rights Transfer:</strong> All intellectual property rights will be transferred to the client upon receipt of full payment.</p>"},
-            {"title": "Cancellation Policy", "description": "<p><strong>Cancellation Notice:</strong> 48-hour advance notice required for meeting cancellations. Project cancellation terms as per signed agreement.</p>"}
-        ]'::jsonb,
+            {
+                "title": "Ketentuan Pembayaran", 
+                "description": "<p><strong>Jadwal Pembayaran:</strong></p><ul><li>50% pembayaran di muka diperlukan untuk memulai pekerjaan</li><li>50% sisanya jatuh tempo setelah penyelesaian dan penyerahan proyek</li><li>Pembayaran melalui transfer bank atau metode yang disepakati</li></ul>"
+            },
+            {
+                "title": "Timeline Proyek", 
+                "description": "<p><strong>Jadwal Pengiriman:</strong></p><ul><li>Timeline proyek sesuai kesepakatan dalam dokumen scope proyek</li><li>Deliverable berbasis milestone</li><li>Perubahan scope dapat mempengaruhi timeline</li></ul>"
+            },
+            {
+                "title": "Kebijakan Revisi", 
+                "description": "<p><strong>Revisi Termasuk:</strong></p><ul><li>Hingga 3 revisi besar termasuk dalam harga yang dikutip</li><li>Revisi tambahan akan dikenakan biaya terpisah</li><li>Minor adjustment tidak dikenakan biaya tambahan</li></ul>"
+            },
+            {
+                "title": "Hak Kekayaan Intelektual", 
+                "description": "<p><strong>Transfer Hak:</strong></p><ul><li>Semua hak kekayaan intelektual akan dialihkan kepada klien</li><li>Transfer dilakukan setelah pembayaran penuh diterima</li><li>Source code dan dokumentasi disertakan</li></ul>"
+            },
+            {
+                "title": "Kebijakan Pembatalan", 
+                "description": "<p><strong>Pemberitahuan Pembatalan:</strong></p><ul><li>Pemberitahuan 48 jam diperlukan untuk pembatalan meeting</li><li>Ketentuan pembatalan proyek sesuai perjanjian yang ditandatangani</li><li>Refund policy berlaku sesuai tahapan proyek</li></ul>"
+            }
+        ]'::jsonb, -- Enhanced terms with HTML descriptions
         NEW.id
     );
 
